@@ -1,7 +1,16 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/veltahq/kiv/engine"
+)
 
 func main() {
-	fmt.Println("Kiv")
+	db := engine.NewDatabase{
+		Name:   "testDB",
+		Tables: map[string]engine.Table{},
+	}
+
+	fmt.Println(db)
 }
