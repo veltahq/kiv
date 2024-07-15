@@ -4,7 +4,7 @@ import (
 	"fmt"
 )
 
-func InsertRow(db *NewDatabase, tableName string, id string, data interface{}) error {
+func (db *NewDatabase) InsertRow(tableName string, id string, data interface{}) error {
 	table, ok := db.Tables[tableName]
 
 	if !ok {
@@ -22,33 +22,6 @@ func InsertRow(db *NewDatabase, tableName string, id string, data interface{}) e
 	newRow.Columns["data"] = data
 
 	table.Rows = append(table.Rows, newRow)
-
-	db.Tables[tableName] = table
-
-	return nil
-}
-
-func (db *NewDatabase) DeleteRow(tableName string, id string) error {
-	table, ok := db.Tables[tableName]
-
-	if !ok {
-		return fmt.Errorf("table '%s' does not exist in database", tableName)
-	}
-
-	index := -1
-
-	for i, row := range table.Rows {
-		if val, ok := row.Columns["id"].(string); ok && val == id {
-			index = i
-			break
-		}
-	}
-
-	if index == -1 {
-		return fmt.Errorf("id '%s' not found in table '%s'", id, tableName)
-	}
-
-	table.Rows = append(table.Rows[:index], table.Rows[index+1:]...)
 
 	db.Tables[tableName] = table
 
@@ -84,6 +57,33 @@ func (db *NewDatabase) UpdateRow(tableName string, id string, newData map[string
 	return nil
 }
 
+func (db *NewDatabase) DeleteRow(tableName string, id string) error {
+	table, ok := db.Tables[tableName]
+
+	if !ok {
+		return fmt.Errorf("table '%s' does not exist in database", tableName)
+	}
+
+	index := -1
+
+	for i, row := range table.Rows {
+		if val, ok := row.Columns["id"].(string); ok && val == id {
+			index = i
+			break
+		}
+	}
+
+	if index == -1 {
+		return fmt.Errorf("id '%s' not found in table '%s'", id, tableName)
+	}
+
+	table.Rows = append(table.Rows[:index], table.Rows[index+1:]...)
+
+	db.Tables[tableName] = table
+
+	return nil
+}
+
 func (db *NewDatabase) GetRowByID(tableName string, id string) (Row, error) {
 	table, ok := db.Tables[tableName]
 
@@ -108,15 +108,6 @@ func (db *NewDatabase) GetAllRows(tableName string) ([]Row, error) {
 	}
 
 	return table.Rows, nil
-}
-
-func RowKeyExists(rows []Row, id string) bool {
-	for _, row := range rows {
-		if val, ok := row.Columns["id"].(string); ok && val == id {
-			return true
-		}
-	}
-	return false
 }
 
 func (db *NewDatabase) CountRows(tableName string) (int, error) {
@@ -158,4 +149,13 @@ func (db *NewDatabase) DropTable(tableName string) error {
 	delete(db.Tables, tableName)
 
 	return nil
+}
+
+func RowKeyExists(rows []Row, id string) bool {
+	for _, row := range rows {
+		if val, ok := row.Columns["id"].(string); ok && val == id {
+			return true
+		}
+	}
+	return false
 }
