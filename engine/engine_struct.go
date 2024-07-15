@@ -2,16 +2,18 @@ package engine
 
 import (
 	"time"
-
-	"github.com/google/btree"
 )
+
+type NewDatabase struct {
+	Name   string
+	Tables map[string]Table
+}
 
 type Table struct {
 	Name    string
 	Columns []Column
 	Indexes []Index
 	Rows    []Row
-	IdxTree *btree.BTree
 }
 
 type IndexEntry struct {
@@ -77,11 +79,6 @@ const (
 	Sort
 	LimitOp
 )
-
-type NewDatabase struct {
-	Name   string
-	Tables map[string]Table
-}
 
 type Transaction struct {
 	ID        int
