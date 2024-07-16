@@ -1,94 +1,98 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 )
 
-func (db *NewDatabase) InsertRow(tableName string, id string, data interface{}) error {
+var (
+	ErrTableNotFound = errors.New("table not found in database")
+	ErrIDNotFound    = errors.New("ID not found in table")
+	ErrIDExists      = errors.New("ID already exists in table")
+	ErrTableExists   = errors.New("table already exists in database")
+)
+
+func (db *NewDatabase) InsertRow(tableName, id string, data map[string]interface{}) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
 	table, ok := db.Tables[tableName]
 
 	if !ok {
-		return fmt.Errorf("table '%s' does not exist in database", tableName)
+		return fmt.Errorf("%w: %s", ErrTableNotFound, tableName)
 	}
 
-	if RowKeyExists(table.Rows, id) {
-		return fmt.Errorf("id '%s' already exists in table '%s'", id, tableName)
+	if rowKeyExists(table.Rows, id) {
+		return fmt.Errorf("%w: %s in table %s", ErrIDExists, id, tableName)
 	}
 
 	newRow := Row{
 		Columns: make(map[string]interface{}),
 	}
 	newRow.Columns["id"] = id
-	newRow.Columns["data"] = data
+
+	for key, value := range data {
+		newRow.Columns[key] = value
+	}
 
 	table.Rows = append(table.Rows, newRow)
-
 	db.Tables[tableName] = table
 
 	return nil
 }
 
-func (db *NewDatabase) UpdateRow(tableName string, id string, newData map[string]interface{}) error {
+func (db *NewDatabase) UpdateRow(tableName, id string, newData map[string]interface{}) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
 	table, ok := db.Tables[tableName]
 
 	if !ok {
-		return fmt.Errorf("table '%s' does not exist in database", tableName)
+		return fmt.Errorf("%w: %s", ErrTableNotFound, tableName)
 	}
-
-	index := -1
 
 	for i, row := range table.Rows {
 		if val, ok := row.Columns["id"].(string); ok && val == id {
-			index = i
-			break
+			for key, value := range newData {
+				table.Rows[i].Columns[key] = value
+			}
+			db.Tables[tableName] = table
+			return nil
 		}
 	}
 
-	if index == -1 {
-		return fmt.Errorf("id '%s' not found in table '%s'", id, tableName)
-	}
-
-	for key, value := range newData {
-		table.Rows[index].Columns[key] = value
-	}
-
-	db.Tables[tableName] = table
-
-	return nil
+	return fmt.Errorf("%w: %s in table %s", ErrIDNotFound, id, tableName)
 }
 
-func (db *NewDatabase) DeleteRow(tableName string, id string) error {
+func (db *NewDatabase) DeleteRow(tableName, id string) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
 	table, ok := db.Tables[tableName]
 
 	if !ok {
-		return fmt.Errorf("table '%s' does not exist in database", tableName)
+		return fmt.Errorf("%w: %s", ErrTableNotFound, tableName)
 	}
-
-	index := -1
 
 	for i, row := range table.Rows {
 		if val, ok := row.Columns["id"].(string); ok && val == id {
-			index = i
-			break
+			table.Rows = append(table.Rows[:i], table.Rows[i+1:]...)
+			db.Tables[tableName] = table
+			return nil
 		}
 	}
 
-	if index == -1 {
-		return fmt.Errorf("id '%s' not found in table '%s'", id, tableName)
-	}
-
-	table.Rows = append(table.Rows[:index], table.Rows[index+1:]...)
-
-	db.Tables[tableName] = table
-
-	return nil
+	return fmt.Errorf("%w: %s in table %s", ErrIDNotFound, id, tableName)
 }
 
-func (db *NewDatabase) GetRowByID(tableName string, id string) (Row, error) {
+func (db *NewDatabase) GetRowByID(tableName, id string) (Row, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
 	table, ok := db.Tables[tableName]
 
 	if !ok {
-		return Row{}, fmt.Errorf("table '%s' does not exist in database", tableName)
+		return Row{}, fmt.Errorf("%w: %s", ErrTableNotFound, tableName)
 	}
 
 	for _, row := range table.Rows {
@@ -97,61 +101,66 @@ func (db *NewDatabase) GetRowByID(tableName string, id string) (Row, error) {
 		}
 	}
 
-	return Row{}, fmt.Errorf("id '%s' not found in table '%s'", id, tableName)
+	return Row{}, fmt.Errorf("%w: %s in table %s", ErrIDNotFound, id, tableName)
 }
 
 func (db *NewDatabase) GetAllRows(tableName string) ([]Row, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
 	table, ok := db.Tables[tableName]
 
 	if !ok {
-		return nil, fmt.Errorf("table '%s' does not exist in database", tableName)
+		return nil, fmt.Errorf("%w: %s", ErrTableNotFound, tableName)
 	}
 
 	return table.Rows, nil
 }
 
 func (db *NewDatabase) CountRows(tableName string) (int, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
 	table, ok := db.Tables[tableName]
 
 	if !ok {
-		return 0, fmt.Errorf("table '%s' does not exist in database", tableName)
+		return 0, fmt.Errorf("%w: %s", ErrTableNotFound, tableName)
 	}
 
 	return len(table.Rows), nil
 }
 
 func (db *NewDatabase) CreateTable(tableName string, columns []Column, indexes []Index) error {
-	_, exists := db.Tables[tableName]
+	db.mu.Lock()
+	defer db.mu.Unlock()
 
-	if exists {
-		return fmt.Errorf("table '%s' already exists in database", tableName)
+	if _, exists := db.Tables[tableName]; exists {
+		return fmt.Errorf("%w: %s", ErrTableExists, tableName)
 	}
 
-	newTable := Table{
+	db.Tables[tableName] = Table{
 		Name:    tableName,
 		Columns: columns,
 		Indexes: indexes,
 		Rows:    []Row{},
 	}
 
-	db.Tables[tableName] = newTable
-
 	return nil
 }
 
 func (db *NewDatabase) DropTable(tableName string) error {
-	_, ok := db.Tables[tableName]
+	db.mu.Lock()
+	defer db.mu.Unlock()
 
-	if !ok {
-		return fmt.Errorf("table '%s' does not exist in database", tableName)
+	if _, ok := db.Tables[tableName]; !ok {
+		return fmt.Errorf("%w: %s", ErrTableNotFound, tableName)
 	}
 
 	delete(db.Tables, tableName)
-
 	return nil
 }
 
-func RowKeyExists(rows []Row, id string) bool {
+func rowKeyExists(rows []Row, id string) bool {
 	for _, row := range rows {
 		if val, ok := row.Columns["id"].(string); ok && val == id {
 			return true

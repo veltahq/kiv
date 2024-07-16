@@ -1,12 +1,14 @@
 package engine
 
 import (
+	"sync"
 	"time"
 )
 
 type NewDatabase struct {
 	Name   string
 	Tables map[string]Table
+	mu     sync.RWMutex
 }
 
 type Table struct {
