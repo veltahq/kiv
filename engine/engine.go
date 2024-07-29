@@ -3,14 +3,191 @@ package engine
 import (
 	"errors"
 	"fmt"
+	"sort"
+	"time"
 )
 
 var (
-	ErrTableNotFound = errors.New("table not found in database")
-	ErrIDNotFound    = errors.New("ID not found in table")
-	ErrIDExists      = errors.New("ID already exists in table")
-	ErrTableExists   = errors.New("table already exists in database")
+	ErrTableNotFound     = errors.New("table not found in database")
+	ErrIDNotFound        = errors.New("ID not found in table")
+	ErrIDExists          = errors.New("ID already exists in table")
+	ErrTableExists       = errors.New("table already exists in database")
+	ErrInvalidQuery      = errors.New("invalid query")
+	ErrTransactionFailed = errors.New("transaction failed")
 )
+
+func (db *NewDatabase) ExecuteQuery(query Query) (QueryResult, error) {
+	plan, err := db.createExecutionPlan(query)
+
+	if err != nil {
+		return QueryResult{}, err
+	}
+
+	result, err := db.executeplan(plan)
+
+	if err != nil {
+		return QueryResult{}, err
+	}
+
+	return result, nil
+}
+
+func (db *NewDatabase) createExecutionPlan(query Query) (ExecutionPlan, error) {
+	plan := ExecutionPlan{}
+
+	scanOp := Operation{
+		Type:  Scan,
+		Table: query.From,
+	}
+	plan.Operations = append(plan.Operations, scanOp)
+
+	if query.Where != "" {
+		filterOp := Operation{
+			Type:   Filter,
+			Filter: query.Where,
+			Parent: &plan.Operations[len(plan.Operations)-1],
+		}
+		plan.Operations = append(plan.Operations, filterOp)
+	}
+
+	projectOp := Operation{
+		Type:    Project,
+		Columns: query.Select,
+		Parent:  &plan.Operations[len(plan.Operations)-1],
+	}
+	plan.Operations = append(plan.Operations, projectOp)
+
+	if query.OrderBy != "" {
+		sortOp := Operation{
+			Type:   Sort,
+			Order:  query.OrderBy,
+			Parent: &plan.Operations[len(plan.Operations)-1],
+		}
+		plan.Operations = append(plan.Operations, sortOp)
+	}
+
+	if query.Limit > 0 {
+		limitOp := Operation{
+			Type:   LimitOp,
+			Limit:  query.Limit,
+			Parent: &plan.Operations[len(plan.Operations)-1],
+		}
+		plan.Operations = append(plan.Operations, limitOp)
+	}
+
+	return plan, nil
+}
+
+func (db *NewDatabase) executeplan(plan ExecutionPlan) (QueryResult, error) {
+	var result QueryResult
+	var rows []Row
+
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+
+	table, ok := db.Tables[plan.Operations[0].Table]
+	if !ok {
+		return result, fmt.Errorf("%w: %s", ErrTableNotFound, plan.Operations[0].Table)
+	}
+
+	rows = table.Rows
+
+	for _, op := range plan.Operations {
+		switch op.Type {
+		case Filter:
+			rows = filterRows(rows, op.Filter)
+		case Project:
+			result.Columns = op.Columns
+			rows = projectRows(rows, op.Columns)
+		case Sort:
+			sortRows(rows, op.Order)
+		case LimitOp:
+			if len(rows) > op.Limit {
+				rows = rows[:op.Limit]
+			}
+		}
+	}
+
+	result.Rows = rows
+	return result, nil
+}
+
+func filterRows(rows []Row, filter string) []Row {
+	var filtered []Row
+
+	for _, row := range rows {
+		if evaluateFilter(row, filter) {
+			filtered = append(filtered, row)
+		}
+	}
+
+	return filtered
+}
+
+func evaluateFilter(row Row, filter string) bool {
+	return true
+}
+
+func projectRows(rows []Row, columns []string) []Row {
+	var projected []Row
+	for _, row := range rows {
+		newRow := Row{Columns: make(map[string]interface{})}
+		for _, col := range columns {
+			if val, ok := row.Columns[col]; ok {
+				newRow.Columns[col] = val
+			}
+		}
+		projected = append(projected, newRow)
+	}
+	return projected
+}
+
+func sortRows(rows []Row, _ string) {
+	sort.Slice(rows, func(i, j int) bool {
+		return true
+	})
+}
+
+func (db *NewDatabase) BeginTransaction() (*Transaction, error) {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	transaction := &Transaction{
+		ID:        generateTransactionID(),
+		Status:    Pending,
+		StartedAt: time.Now(),
+	}
+
+	return transaction, nil
+}
+
+func (db *NewDatabase) CommitTransaction(transaction *Transaction) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	if transaction.Status != Pending {
+		return ErrTransactionFailed
+	}
+
+	transaction.Status = Committed
+	return nil
+}
+
+func (db *NewDatabase) RollbackTransaction(transaction *Transaction) error {
+	db.mu.Lock()
+	defer db.mu.Unlock()
+
+	if transaction.Status != Pending {
+		return ErrTransactionFailed
+	}
+
+	transaction.Status = RolledBack
+	return nil
+}
+
+func generateTransactionID() int {
+	return time.Now().Nanosecond()
+}
 
 func (db *NewDatabase) InsertRow(tableName, id string, data map[string]interface{}) error {
 	db.mu.Lock()
